@@ -21,32 +21,17 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
-
-      - name: A - kapt stubs (log chi tiet)
-        continue-on-error: true
+      - name: Build debug APK
         working-directory: ${{ env.PROJ }}
         run: |
-          gradle :app:kaptGenerateStubsDebugKotlin --no-daemon --info --console=plain > ../../build-A.log 2>&1 || true
-          echo "=== A: LOI ==="
-          grep -n -E "^e: |Exception|Caused by|incompatible|Could not load" ../../build-A.log | head -40
-
-      - name: B - tat kapt de Kotlin in loi that
-        continue-on-error: true
-        run: |
-          cp -r "$PROJ" /tmp/nokapt
-          cd /tmp/nokapt
-          sed -i "/org.jetbrains.kotlin.kapt/d;/^ *kapt /d" app/build.gradle
-          gradle :app:compileDebugKotlin --no-daemon --console=plain --continue > $GITHUB_WORKSPACE/build-B.log 2>&1 || true
-          echo "=== B: LOI THAT ==="
-          grep -E "^e: " $GITHUB_WORKSPACE/build-B.log | sed 's#file:///[^ ]*/src/##' | head -80
-          echo "=== B: dong cuoi ==="
-          tail -n 15 $GITHUB_WORKSPACE/build-B.log
-
-      - name: Upload logs
-        if: always()
-        uses: actions/upload-artifact@v4
+          set +e
+          gradle assembleDebug --no-daemon --console=plain --continue > build.log 2>&1
+          code=$?
+          echo "=== LOI ==="
+          grep -E "^e: " build.log | head -60
+          tail -n 15 build.log
+          exit $code
+      - uses: actions/upload-artifact@v4
         with:
-          name: build-logs
-          path: |
-            build-A.log
-            build-B.log
+          name: SimpleGallery-debug-apk
+          path: ${{ env.PROJ }}/app/build/outputs/apk/debug/*.apk
