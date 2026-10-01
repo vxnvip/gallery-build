@@ -31,20 +31,27 @@ jobs:
           fi
           mkdir -p ~/.android
           echo "$KS" | base64 -d > ~/.android/debug.keystore
-      - name: Check key
-        run: |
-          ls -l ~/.android/debug.keystore
-          keytool -list -keystore ~/.android/debug.keystore -storepass android | grep -i -E "androiddebugkey|sha"
+          chmod 600 ~/.android/debug.keystore
       - name: Build debug APK
         working-directory: ${{ env.PROJ }}
         run: |
           set +e
-          gradle assembleDebug --no-daemon --console=plain --continue > build.log 2>&1
+          gradle assembleDebug --no-daemon --console=plain --continue \
+            -Pandroid.injected.signing.store.file="$HOME/.android/debug.keystore" \
+            -Pandroid.injected.signing.store.password=android \
+            -Pandroid.injected.signing.key.alias=androiddebugkey \
+            -Pandroid.injected.signing.key.password=android \
+            > build.log 2>&1
           code=$?
           echo "=== LOI ==="
           grep -E "^e: " build.log | head -60
           tail -n 15 build.log
           exit $code
+      - name: Verify APK signature
+        run: |
+          out=$($ANDROID_HOME/build-tools/35.0.0/apksigner verify --print-certs ${{ env.PROJ }}/app/build/outputs/apk/debug/*.apk | grep SHA-256)
+          echo "$out"
+          echo "$out" | grep -q 322a8179607bd784 || { echo "SAI KEY"; exit 1; }
       - uses: actions/upload-artifact@v4
         with:
           name: SimpleGallery-debug-apk
