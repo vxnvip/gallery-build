@@ -1,42 +1,26 @@
 name: Build APK
-
 on: workflow_dispatch
-
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
-
       - name: Unzip project
         run: |
           unzip -q Simple-Gallery-github.zip -d src
           echo "PROJ=$(dirname "$(find src -name settings.gradle | head -1)")" >> $GITHUB_ENV
-
-      - name: Setup fixed debug keystore
-        env:
-          KS: ${{ secrets.DEBUG_KEYSTORE_B64 }}
-        run: |
-          mkdir -p ~/.android
-          echo "$KS" | tr -d '[:space:]' | base64 --decode > ~/.android/debug.keystore
-
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-
       - uses: android-actions/setup-android@v3
         with:
           packages: 'platforms;android-35 build-tools;35.0.0'
-
       - name: Accept licenses
         run: yes | sdkmanager --licenses || true
-
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
-
       - name: Build debug APK
         working-directory: ${{ env.PROJ }}
         run: |
@@ -47,7 +31,6 @@ jobs:
           grep -E "^e: " build.log | head -60
           tail -n 15 build.log
           exit $code
-
       - uses: actions/upload-artifact@v4
         with:
           name: SimpleGallery-debug-apk
