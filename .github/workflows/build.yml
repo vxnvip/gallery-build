@@ -2,7 +2,7 @@ name: Build APK
 on: workflow_dispatch
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: Unzip project
@@ -25,8 +25,16 @@ jobs:
         env:
           KS: ${{ secrets.DEBUG_KEYSTORE_B64 }}
         run: |
+          if [ -z "$KS" ]; then
+            echo "LOI: secret DEBUG_KEYSTORE_B64 rong hoac chua tao"
+            exit 1
+          fi
           mkdir -p ~/.android
           echo "$KS" | base64 -d > ~/.android/debug.keystore
+      - name: Check key
+        run: |
+          ls -l ~/.android/debug.keystore
+          keytool -list -keystore ~/.android/debug.keystore -storepass android | grep -i -E "androiddebugkey|sha"
       - name: Build debug APK
         working-directory: ${{ env.PROJ }}
         run: |
