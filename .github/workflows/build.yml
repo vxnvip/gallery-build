@@ -1,69 +1,154 @@
 name: Build APK
+
 on: workflow_dispatch
+
 jobs:
   build:
     runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
 
+    steps:
+      # =========================
+      # CHECKOUT — lấy đúng commit hiện tại
+      # =========================
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # =========================
+      # UNZIP PROJECT
+      # =========================
       - name: Unzip project
         run: |
           unzip -q Simple-Gallery-github.zip -d src
-          echo "PROJ=$(dirname "$(find src -name settings.gradle | head -1)")" >> $GITHUB_ENV
+          echo "PROJ=$(dirname "$(find src -name settings.gradle | head -1)")" >> "$GITHUB_ENV"
 
+      # =========================
+      # JAVA
+      # =========================
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
+          cache: gradle
 
+      # =========================
+      # ANDROID SDK
+      # =========================
       - uses: android-actions/setup-android@v3
         with:
           packages: 'platforms;android-35 build-tools;35.0.0'
 
+      # SDK đã có sẵn thì không cần làm gì thêm
       - name: Accept licenses
         run: yes | sdkmanager --licenses || true
 
+      # =========================
+      # GRADLE
+      # =========================
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
+          cache-read-only: false
 
+      # =========================
+      # FIXED SIGNING KEY
+      # KHÔNG ĐỤNG CƠ CHẾ CHỮ KÝ
+      # =========================
       - name: Restore fixed signing key
         env:
           KS: ${{ secrets.DEBUG_KEYSTORE_B64 }}
         run: |
-          if [ -z "$KS" ]; then echo "LOI: secret rong"; exit 1; fi
+          if [ -z "$KS" ]; then
+            echo "LOI: secret rong"
+            exit 1
+          fi
+
           mkdir -p ~/.android
-          echo "$KS" | tr -d '[:space:]' | base64 --decode > ~/.android/debug.keystore
+
+          echo "$KS" |
+            tr -d '[:space:]' |
+            base64 --decode > ~/.android/debug.keystore
+
           chmod 600 ~/.android/debug.keystore
 
+      # =========================
+      # VERIFY SIGNING KEY
+      # KHÔNG ĐỔI
+      # =========================
       - name: Check signing key
         run: |
-          keytool -list -v -keystore ~/.android/debug.keystore \
-            -storepass android -alias androiddebugkey |
+          keytool -list -v \
+            -keystore ~/.android/debug.keystore \
+            -storepass android \
+            -alias androiddebugkey |
             grep -E "Alias name:|Entry type:|SHA-256:"
 
+      # =========================
+      # BUILD — FULL SQUEEZE
+      # =========================
       - name: Build debug APK
         working-directory: ${{ env.PROJ }}
+        env:
+          # Gradle daemon + JVM tối ưu cho runner 4 CPU / 16 GB
+          GRADLE_OPTS: >-
+            -Dorg.gradle.daemon=true
+            -Dorg.gradle.jvmargs=-Xmx4g -XX:+UseParallelGC
+            -Dorg.gradle.workers.max=4
+            -Dfile.encoding=UTF-8
+
+          # Gradle performance
+          GRADLE_USER_HOME: ${{ runner.temp }}/gradle-home
+
         run: |
           set +e
+
           gradle assembleDebug \
             -Pandroid.injected.signing.store.file="$HOME/.android/debug.keystore" \
             -Pandroid.injected.signing.store.password=android \
             -Pandroid.injected.signing.key.alias=androiddebugkey \
             -Pandroid.injected.signing.key.password=android \
-            --no-daemon --console=plain --continue > build.log 2>&1
+            --daemon \
+            --build-cache \
+            --configuration-cache \
+            --parallel \
+            --console=plain \
+            --continue > build.log 2>&1
+
           code=$?
+
           echo "=== LOI ==="
           grep -E "^e: " build.log | head -60
+
+          echo "=== CUOI LOG ==="
           tail -n 15 build.log
+
           exit $code
 
+      # =========================
+      # VERIFY APK SIGNATURE
+      # KHÔNG ĐỔI
+      # =========================
       - name: Verify APK signature
         run: |
-          out=$($ANDROID_HOME/build-tools/35.0.0/apksigner verify --print-certs ${{ env.PROJ }}/app/build/outputs/apk/debug/*.apk | grep SHA-256)
-          echo "$out"
-          echo "$out" | grep -q 322a8179607bd784 || { echo "SAI KEY"; exit 1; }
+          out=$(
+            $ANDROID_HOME/build-tools/35.0.0/apksigner verify \
+              --print-certs \
+              ${{ env.PROJ }}/app/build/outputs/apk/debug/*.apk |
+              grep SHA-256
+          )
 
+          echo "$out"
+
+          echo "$out" |
+            grep -q 322a8179607bd784 ||
+            {
+              echo "SAI KEY"
+              exit 1
+            }
+
+      # =========================
+      # UPLOAD APK
+      # =========================
       - uses: actions/upload-artifact@v4
         with:
           name: SimpleGallery-debug-apk
