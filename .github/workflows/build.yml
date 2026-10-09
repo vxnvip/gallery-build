@@ -51,12 +51,24 @@ jobs:
             -Pandroid.injected.signing.store.password=android \
             -Pandroid.injected.signing.key.alias=androiddebugkey \
             -Pandroid.injected.signing.key.password=android \
-            --no-daemon --console=plain --continue > build.log 2>&1
+            --no-daemon --console=plain --continue --stacktrace > build.log 2>&1
           code=$?
-          echo "=== LOI ==="
-          grep -E "^e: " build.log | head -60
-          tail -n 15 build.log
+          echo "=== BUILD EXIT CODE: $code ==="
+          echo "=== LOI (Java / Kotlin / AAPT / Gradle) ==="
+          grep -nE "error:|^e: |What went wrong|Execution failed|AAPT|FAILURE:|Caused by:|Could not " -A6 build.log | head -150
+          echo "=== TASK FAILED ==="
+          grep -nE "Task .* FAILED" build.log
+          echo "=== 60 DONG CUOI ==="
+          tail -n 60 build.log
           exit $code
+
+      - name: Upload build.log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: ${{ env.PROJ }}/build.log
+          if-no-files-found: warn
 
       - name: Verify APK signature
         run: |
