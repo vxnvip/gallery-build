@@ -8,7 +8,7 @@ jobs:
 
       - name: Unzip project
         run: |
-          unzip -q Simple-Gallery-github.zip -d src
+          unzip -q duyquyen.zip -d src
           echo "PROJ=$(dirname "$(find src -name settings.gradle | head -1)")" >> $GITHUB_ENV
 
       - uses: actions/setup-java@v4
