@@ -1,4 +1,4 @@
-name: Build APK (test decompiled Java)
+name: Build APK
 on: workflow_dispatch
 jobs:
   build:
@@ -8,8 +8,8 @@ jobs:
 
       - name: Unzip project
         run: |
-          unzip -q duyquyen.zip -d src
-          echo "PROJ=$(dirname "$(find src -maxdepth 3 -name settings.gradle | head -1)")" >> $GITHUB_ENV
+          unzip -q Simple-Gallery-github.zip -d src
+          echo "PROJ=$(dirname "$(find src -name settings.gradle | head -1)")" >> $GITHUB_ENV
 
       - uses: actions/setup-java@v4
         with:
@@ -25,21 +25,46 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.11.1'
+          gradle-version: '8.10.2'
+
+      - name: Restore fixed signing key
+        env:
+          KS: ${{ secrets.DEBUG_KEYSTORE_B64 }}
+        run: |
+          if [ -z "$KS" ]; then echo "LOI: secret rong"; exit 1; fi
+          mkdir -p ~/.android
+          echo "$KS" | tr -d '[:space:]' | base64 --decode > ~/.android/debug.keystore
+          chmod 600 ~/.android/debug.keystore
+
+      - name: Check signing key
+        run: |
+          keytool -list -v -keystore ~/.android/debug.keystore \
+            -storepass android -alias androiddebugkey |
+            grep -E "Alias name:|Entry type:|SHA-256:"
 
       - name: Build debug APK
         working-directory: ${{ env.PROJ }}
         run: |
           set +e
-          gradle assembleDebug --no-daemon --console=plain --stacktrace > build.log 2>&1
+          gradle assembleDebug \
+            -Pandroid.injected.signing.store.file="$HOME/.android/debug.keystore" \
+            -Pandroid.injected.signing.store.password=android \
+            -Pandroid.injected.signing.key.alias=androiddebugkey \
+            -Pandroid.injected.signing.key.password=android \
+            --no-daemon --console=plain --continue > build.log 2>&1
           code=$?
           echo "=== LOI ==="
-          grep -E "error:|^e: |What went wrong" -A4 build.log | head -80
-          tail -n 20 build.log
+          grep -E "^e: " build.log | head -60
+          tail -n 15 build.log
           exit $code
+
+      - name: Verify APK signature
+        run: |
+          out=$($ANDROID_HOME/build-tools/35.0.0/apksigner verify --print-certs ${{ env.PROJ }}/app/build/outputs/apk/debug/*.apk | grep SHA-256)
+          echo "$out"
+          echo "$out" | grep -q 322a8179607bd784 || { echo "SAI KEY"; exit 1; }
 
       - uses: actions/upload-artifact@v4
         with:
-          name: GolikeMulti-javatest-apk
+          name: SimpleGallery-debug-apk
           path: ${{ env.PROJ }}/app/build/outputs/apk/debug/*.apk
-          if-no-files-found: error
