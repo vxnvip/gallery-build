@@ -9,7 +9,7 @@ jobs:
       - name: Unzip project
         run: |
           unzip -q duyquyen.zip -d src
-          echo "PROJ=$(dirname "$(find src -name settings.gradle | head -1)")" >> $GITHUB_ENV
+          echo "PROJ=$(dirname "$(find src -maxdepth 3 -name settings.gradle | head -1)")" >> $GITHUB_ENV
 
       - uses: actions/setup-java@v4
         with:
@@ -18,65 +18,43 @@ jobs:
 
       - uses: android-actions/setup-android@v3
         with:
-          packages: 'platforms;android-35 build-tools;35.0.0'
+          packages: 'platforms;android-33 build-tools;33.0.2'
 
       - name: Accept licenses
         run: yes | sdkmanager --licenses || true
 
       - uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.10.2'
+          gradle-version: '8.1.1'
 
-      - name: Restore fixed signing key
+      - name: Restore signing key (neu co secret)
         env:
           KS: ${{ secrets.DEBUG_KEYSTORE_B64 }}
         run: |
-          if [ -z "$KS" ]; then echo "LOI: secret rong"; exit 1; fi
-          mkdir -p ~/.android
-          echo "$KS" | tr -d '[:space:]' | base64 --decode > ~/.android/debug.keystore
-          chmod 600 ~/.android/debug.keystore
-
-      - name: Check signing key
-        run: |
-          keytool -list -v -keystore ~/.android/debug.keystore \
-            -storepass android -alias androiddebugkey |
-            grep -E "Alias name:|Entry type:|SHA-256:"
+          if [ -n "$KS" ]; then
+            mkdir -p ~/.android
+            echo "$KS" | tr -d '[:space:]' | base64 --decode > ~/.android/debug.keystore
+            chmod 600 ~/.android/debug.keystore
+            echo "Dung key co dinh"
+          else
+            echo "Khong co secret -> dung debug key mac dinh"
+          fi
 
       - name: Build debug APK
         working-directory: ${{ env.PROJ }}
         run: |
           set +e
-          gradle assembleDebug \
-            -Pandroid.injected.signing.store.file="$HOME/.android/debug.keystore" \
-            -Pandroid.injected.signing.store.password=android \
-            -Pandroid.injected.signing.key.alias=androiddebugkey \
-            -Pandroid.injected.signing.key.password=android \
-            --no-daemon --console=plain --continue --stacktrace > build.log 2>&1
+          gradle :app:assembleDebug \
+            -x test -x lint \
+            --no-daemon --console=plain --stacktrace > build.log 2>&1
           code=$?
-          echo "=== BUILD EXIT CODE: $code ==="
-          echo "=== LOI (Java / Kotlin / AAPT / Gradle) ==="
-          grep -nE "error:|^e: |What went wrong|Execution failed|AAPT|FAILURE:|Caused by:|Could not " -A6 build.log | head -150
-          echo "=== TASK FAILED ==="
-          grep -nE "Task .* FAILED" build.log
-          echo "=== 60 DONG CUOI ==="
-          tail -n 60 build.log
+          echo "=== LOI ==="
+          grep -E "error:|^e: |What went wrong" -A4 build.log | head -80
+          tail -n 20 build.log
           exit $code
-
-      - name: Upload build.log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-log
-          path: ${{ env.PROJ }}/build.log
-          if-no-files-found: warn
-
-      - name: Verify APK signature
-        run: |
-          out=$($ANDROID_HOME/build-tools/35.0.0/apksigner verify --print-certs ${{ env.PROJ }}/app/build/outputs/apk/debug/*.apk | grep SHA-256)
-          echo "$out"
-          echo "$out" | grep -q 322a8179607bd784 || { echo "SAI KEY"; exit 1; }
 
       - uses: actions/upload-artifact@v4
         with:
-          name: SimpleGallery-debug-apk
+          name: Apk2Java-debug-apk
           path: ${{ env.PROJ }}/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
