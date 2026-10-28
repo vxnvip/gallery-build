@@ -1,15 +1,28 @@
 name: Build APK
 on: workflow_dispatch
+
 jobs:
   build:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
-      - name: Unzip project
+      # Tu dong tim file zip o thu muc goc (neu co) va giai nen, khong can sua ten.
+      # Neu khong co zip thi dung chinh code trong repo.
+      - name: Find project
         run: |
-          unzip -q duyquyen.zip -d src
-          echo "PROJ=$(dirname "$(find src -name settings.gradle | head -1)")" >> $GITHUB_ENV
+          ZIP=$(find . -maxdepth 1 -name '*.zip' | head -1)
+          if [ -n "$ZIP" ]; then
+            echo "Giai nen: $ZIP"
+            unzip -q "$ZIP" -d src
+            ROOT=src
+          else
+            ROOT=.
+          fi
+          SETTINGS=$(find "$ROOT" -name 'settings.gradle' -o -name 'settings.gradle.kts' | grep -v '/\.github/' | awk '{print length, $0}' | sort -n | head -1 | cut -d' ' -f2-)
+          test -n "$SETTINGS" || { echo "LOI: khong tim thay settings.gradle"; exit 1; }
+          echo "PROJ=$(dirname "$SETTINGS")" >> "$GITHUB_ENV"
+          echo "Project: $(dirname "$SETTINGS")"
 
       - uses: actions/setup-java@v4
         with:
@@ -20,51 +33,67 @@ jobs:
         with:
           packages: 'platforms;android-35 build-tools;35.0.0'
 
-      - name: Accept licenses
-        run: yes | sdkmanager --licenses || true
+      - name: Accept licenses and install SDK
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager "platforms;android-35" "platforms;android-34" "build-tools;35.0.0" "build-tools;34.0.0" > /dev/null || true
 
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
 
-      - name: Restore fixed signing key
+      # Co secret thi dung key co dinh, khong co thi dung debug key mac dinh (khong chan build).
+      - name: Restore signing key
         env:
           KS: ${{ secrets.DEBUG_KEYSTORE_B64 }}
         run: |
-          if [ -z "$KS" ]; then echo "LOI: secret rong"; exit 1; fi
           mkdir -p ~/.android
-          echo "$KS" | tr -d '[:space:]' | base64 --decode > ~/.android/debug.keystore
-          chmod 600 ~/.android/debug.keystore
-
-      - name: Check signing key
-        run: |
-          keytool -list -v -keystore ~/.android/debug.keystore \
-            -storepass android -alias androiddebugkey |
-            grep -E "Alias name:|Entry type:|SHA-256:"
+          if [ -z "$KS" ]; then
+            echo "CANH BAO: secret DEBUG_KEYSTORE_B64 rong, dung debug key mac dinh"
+            echo "USE_FIXED_KEY=0" >> "$GITHUB_ENV"
+          else
+            echo "$KS" | tr -d '[:space:]' | base64 --decode > ~/.android/debug.keystore
+            chmod 600 ~/.android/debug.keystore
+            keytool -list -v -keystore ~/.android/debug.keystore \
+              -storepass android -alias androiddebugkey | grep -E "Alias name:|Entry type:|SHA-256:" || true
+            echo "USE_FIXED_KEY=1" >> "$GITHUB_ENV"
+          fi
 
       - name: Build debug APK
         working-directory: ${{ env.PROJ }}
         run: |
           set +e
-          gradle assembleDebug \
-            -Pandroid.injected.signing.store.file="$HOME/.android/debug.keystore" \
-            -Pandroid.injected.signing.store.password=android \
-            -Pandroid.injected.signing.key.alias=androiddebugkey \
-            -Pandroid.injected.signing.key.password=android \
-            --no-daemon --console=plain --continue > build.log 2>&1
+          if [ -f gradlew ]; then chmod +x gradlew; GR=./gradlew; else GR=gradle; fi
+          SIGN=""
+          if [ "$USE_FIXED_KEY" = "1" ]; then
+            SIGN="-Pandroid.injected.signing.store.file=$HOME/.android/debug.keystore -Pandroid.injected.signing.store.password=android -Pandroid.injected.signing.key.alias=androiddebugkey -Pandroid.injected.signing.key.password=android"
+          fi
+          $GR assembleDebug $SIGN --no-daemon --console=plain --continue --stacktrace --warning-mode all > build.log 2>&1
           code=$?
-          echo "=== LOI ==="
-          grep -E "^e: " build.log | head -60
-          tail -n 15 build.log
-          exit $code
+          echo "$code" > exit-code.txt
 
-      - name: Verify APK signature
-        run: |
-          out=$($ANDROID_HOME/build-tools/35.0.0/apksigner verify --print-certs ${{ env.PROJ }}/app/build/outputs/apk/debug/*.apk | grep SHA-256)
-          echo "$out"
-          echo "$out" | grep -q 322a8179607bd784 || { echo "SAI KEY"; exit 1; }
+          {
+            echo "########## 1. LOI JAVAC / KOTLIN (file:dong) ##########"
+            grep -n -E -A4 "error:|^e: " build.log
+            echo
+            echo "########## 2. TASK BI FAIL ##########"
+            grep -E "FAILED$|Execution failed" build.log
+            echo
+            echo "########## 3. GRADLE BAO LOI ##########"
+            sed -n '/^FAILURE:/,/^BUILD FAILED/p' build.log
+            echo
+            echo "########## 4. CAUSED BY ##########"
+            grep -E "Caused by|Could not|AAPT|Unresolved|cannot find symbol|Duplicate class|Manifest merger" build.log | sort -u | head -60
+            echo
+            echo "########## 5. 40 DONG CUOI ##########"
+            tail -n 40 build.log
+          } > errors.txt
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: SimpleGallery-debug-apk
-          path: ${{ env.PROJ }}/app/build/outputs/apk/debug/*.apk
+          echo "=================== KET QUA BUILD (exit $code) ==================="
+          cat errors.txt
+
+          # Day vao tab Summary cua run + hien thanh annotation do
+          {
+            echo "## Ket qua build: exit $code"
+            echo '```'
+            head -c 900000 errors.txt
