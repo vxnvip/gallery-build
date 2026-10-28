@@ -92,8 +92,36 @@ jobs:
           echo "=================== KET QUA BUILD (exit $code) ==================="
           cat errors.txt
 
-          # Day vao tab Summary cua run + hien thanh annotation do
-          {
-            echo "## Ket qua build: exit $code"
-            echo '```'
-            head -c 900000 errors.txt
+          # Day loi vao tab Summary cua run (khong dung ky tu dac biet de khoi bi hong khi dan)
+          echo "## Ket qua build: exit $code" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          head -c 900000 errors.txt | sed 's/^/    /' >> "$GITHUB_STEP_SUMMARY"
+          grep -E "error:|^e: " build.log | head -30 | while read -r l; do echo "::error::$l"; done
+
+          exit $code
+
+      - name: Verify APK signature
+        if: success() && env.USE_FIXED_KEY == '1'
+        run: |
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort | tail -1)
+          APK=$(find "$PROJ" -path '*build/outputs/apk*' -name '*.apk' | head -1)
+          test -n "$APK" || { echo "Khong tim thay APK"; exit 1; }
+          "$APKSIGNER" verify --print-certs "$APK" | grep "SHA-256"
+
+      - name: Upload log (luon chay, ke ca khi build loi)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: |
+            ${{ env.PROJ }}/build.log
+            ${{ env.PROJ }}/errors.txt
+          if-no-files-found: ignore
+
+      - name: Upload APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-apk
+          path: ${{ env.PROJ }}/**/build/outputs/apk/**/*.apk
+          if-no-files-found: error
