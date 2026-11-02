@@ -108,8 +108,9 @@ jobs:
           test -n "$APK" || { echo "Khong tim thay APK"; exit 1; }
           "$APKSIGNER" verify --print-certs "$APK" | grep "SHA-256"
 
-      - name: Upload log (luon chay, ke ca khi build loi)
-        if: always()
+      # Chi upload log khi build LOI, de build thanh cong chi con dung 1 artifact: debug-apk
+      - name: Upload log
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: build-log
